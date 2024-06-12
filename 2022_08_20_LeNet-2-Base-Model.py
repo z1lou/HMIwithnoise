@@ -1,24 +1,10 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[ ]:
-
-
 import tensorflow as tf
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
-
-
-# In[ ]:
-
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from tensorflow.keras.optimizers import Adam
-
-
-# In[ ]:
 
 
 GESTURES = ["g1","g2","g3","g4","g5","g6","g7"]
@@ -53,39 +39,17 @@ for g_idx in range(NUM_GESTURES):
         inputs.append(sensorData_np)
         outputs.append(output)
 
-
-# In[ ]:
-
-
 inputs_np = np.array(inputs)
 outputs_np = np.array(outputs)
-
-
-# In[ ]:
-
 
 X_train, X_test, y_train, y_test = train_test_split(inputs_np,outputs_np, train_size=0.7, stratify= outputs_np)
 #X_valid, X_test, y_valid, y_test = train_test_split(X_rem,y_rem, test_size=0.5,stratify= y_rem)
 
-
-# In[ ]:
-
-
 temp = np.array(X_train)
 temp.shape
-
-
-# In[ ]:
-
-
 temp2 = np.array(y_train)
 temp2.shape
 
-
-# In[ ]:
-
-
-# build the model and train it
 model = tf.keras.Sequential()
 model.add(tf.keras.Input(shape=(600,1)))
 model.add(tf.keras.layers.Conv1D(filters = 8,activation='relu', kernel_size = 3))
@@ -102,16 +66,7 @@ model.add(tf.keras.layers.Dense(NUM_GESTURES, activation='softmax'))
 optimizer = Adam(learning_rate=0.01)
 model.compile(optimizer= optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
 history = model.fit(X_train, y_train,validation_data=(X_test, y_test), epochs=50, batch_size=10)
-
-
-# In[ ]:
-
-
 model.save('base_model2.keras')
-
-
-# In[ ]:
-
 
 model_accuracy = np.array(history.history['accuracy'])
 model_val_accuracy = np.array(history.history['val_accuracy'])

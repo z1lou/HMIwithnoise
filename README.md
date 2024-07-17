@@ -11,4 +11,4 @@ To run the code, type: python3 2022_08_20_LeNet-2-Base-Model.py in terminal.
 
 The trained model will be saved as .keras file. The model accuray and loss will be saved as txt file.
 
-The run time depends on the PC specification. For the machine tested, it takes 1 seconds for each epoch.
+The run time depends on the PC specification. For the machine tested, it takes 1 second per epoch.

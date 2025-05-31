@@ -85,7 +85,7 @@ for run in range(num_runs):
     model.add(Dropout(0.2))
     model.add(Dense(num_classes, activation='softmax'))
 
-    model.compile(optimizer=Adam,
+    model.compile(optimizer=Adam(),
                   loss='categorical_crossentropy',
                   metrics=['accuracy'])
 

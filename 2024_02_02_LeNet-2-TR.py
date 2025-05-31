@@ -1,143 +1,117 @@
-import tensorflow as tf
-import keras
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
+import os
 import numpy as np
 import pandas as pd
-import seaborn as sns
-from sklearn.metrics import confusion_matrix
-import matplotlib.pyplot as plt
-import tensorflow_addons as tfa
+import tensorflow as tf
+import joblib
+from keras.models import load_model
+from keras.utils import to_categorical
+from keras import initializers
 
-GESTURES = ["g1","g2","g3","g4","g5","g6","g7"]
-SAMPLES_PER_GESTURE = 100
-NUM_GESTURES = len(GESTURES)
-ONE_HOT_GESTURES = np.eye(NUM_GESTURES) 
-NUM_SENSOR = 6 
+# === CONFIGURATION ===
+new_subject_data_dir = "new_subject/"
+model_path = "model1.keras"
+output_path = "subject_adapted_model.keras"
 
-inputs = [] 
-outputs = []
+NUM_CLASSES = 19
+SAMPLES_PER_CLASS = 2
+ROWS_PER_SAMPLE = 100
+NUM_FEATURES = 6
 
-scaler = MinMaxScaler()
-for g_idx in range(NUM_GESTURES):
-    g = GESTURES[g_idx]
-    output = ONE_HOT_GESTURES[g_idx]
-    df1 = pd.read_csv("subject1/" + g + ".csv",header = None)
-    df2 = pd.read_csv("subject2/" + g + ".csv",header = None)
-    df3 = pd.read_csv("subject3/" + g + ".csv",header = None)
-    df4 = pd.read_csv("subject4/" + g + ".csv",header = None)
-    df5 = pd.read_csv("subject5/" + g + ".csv",header = None)
-    df6 = pd.read_csv("subject6/" + g + ".csv",header = None)
-    df = df5
-    df_scaled = scaler.fit_transform(df) 
-    df_scaled_DF = pd.DataFrame(df_scaled)  
-    df_scaled_DF = df_scaled_DF.dropna()   
-    num_recordings = int(df_scaled_DF.shape[0] / SAMPLES_PER_GESTURE)
+LR_BACKBONE = 1e-3
+LR_HEAD = 1e-2
+EPOCHS = 20
+BATCH_SIZE = 2
 
-    for i in range(num_recordings):
-        sensorData = df_scaled_DF.iloc[i*SAMPLES_PER_GESTURE:(i+1)*SAMPLES_PER_GESTURE,:]
-        sensorData_np = np.array(sensorData) 
-        sensorData_np = np.reshape(sensorData_np,SAMPLES_PER_GESTURE*NUM_SENSOR)
-        inputs.append(sensorData_np)
-        outputs.append(output)
+# === LOAD FEW-SHOT DATA ===
+def load_few_shot_data(folder_path, num_classes, samples_per_class, rows_per_sample, features):
+    X, y = [], []
+    for class_idx in range(1, num_classes + 1):
+        file_path = os.path.join(folder_path, f'gesture{class_idx}.csv')
+        df = pd.read_csv(file_path)
+        for i in range(samples_per_class):
+            start = i * rows_per_sample
+            end = start + rows_per_sample
+            if end <= len(df):
+                sample = df.iloc[start:end, :features].values
+                X.append(sample)
+                y.append(class_idx - 1)
+    X = np.array(X)
+    y = to_categorical(np.array(y), num_classes)
+    return X, y
 
-inputs_np = np.array(inputs)
-outputs_np = np.array(outputs)
+X_train, y_train = load_few_shot_data(
+    new_subject_data_dir,
+    NUM_CLASSES,
+    SAMPLES_PER_CLASS,
+    ROWS_PER_SAMPLE,
+    NUM_FEATURES
+)
 
-index_oneshot = np.arange(0,280,40)
-index_twoshot = np.arange(0,280,20)
-index_threeshot = np.sort(np.concatenate((index_oneshot+1,index_twoshot)))
-index_fourshot = np.sort(np.concatenate((index_twoshot+1,index_twoshot)))
-index_fiveshot = np.sort(np.concatenate((index_oneshot+2,index_fourshot)))
+# === LOAD SAVED SCALER ===
+scaler = joblib.load("scaler.pkl")  # Adjust path as needed
 
-index_test = np.array([0])
-for i in range(5,20):
-    temp  = np.arange(0,280,20)+i
-    index_test = np.sort(np.concatenate((temp,index_test)))
-index_test = index_test[1:]
-
-
-
-base_model = keras.models.load_model('base_model2.keras')
-# X_rem, X_test, y_rem, y_test = train_test_split(inputs_np,outputs_np, train_size=0.1, stratify = outputs_np)
-# X_train, X_valid, y_train, y_valid = train_test_split(inputs_np[index_twoshot],outputs_np[index_twoshot], train_size=0.5, stratify = outputs_np[index_twoshot])
-
-X_train = inputs_np[index_fourshot]
-y_train = outputs_np[index_fourshot]
-
-X_test = inputs_np[index_test]
-y_test = outputs_np[index_test]
-
-predictions = base_model.predict(X_test)
-predict_class = np.argmax(predictions, axis=1)
-ground_truth = np.argmax(y_test, axis=1)
+# Flatten, normalize, and reshape back
+X_train_flat = X_train.reshape(-1, NUM_FEATURES)
+X_train_scaled = scaler.transform(X_train_flat)
+X_train = X_train_scaled.reshape(-1, ROWS_PER_SAMPLE, NUM_FEATURES)
 
 
-sns.set()
-f,ax=plt.subplots()
-y_true = ground_truth
-y_pred = predict_class
-C2= confusion_matrix(y_true, y_pred)
-sns.heatmap(C2,annot=True,ax=ax)
-ax.set_title('confusion matrix') 
-ax.set_xlabel('predict') 
-ax.set_ylabel('true') 
-plt.savefig('test.png', dpi = 300)
+# === LOAD BASE MODEL ===
+model = load_model(model_path, compile=False)
+model.trainable = True
 
-scores = base_model.evaluate(X_test,y_test,verbose = 0)
-print(scores)
-new_model = base_model
+# === Reinitialize final Dense layer (e.g., "dense_17") ===
+def reinitialize_layer(model, layer_name):
+    layer = model.get_layer(name=layer_name)
+    init = initializers.RandomNormal(mean=0.0, stddev=0.05, seed=42)
+    weights = layer.get_weights()
+    new_weights = [init(w.shape) for w in weights]
+    layer.set_weights(new_weights)
 
+reinitialize_layer(model, "dense_17")  # Replace name if needed
 
-def reinitialize_layer(model, initializer, layer_name):
-    layer = model.get_layer(layer_name)    
-    layer.set_weights([initializer(shape=w.shape) for w in layer.get_weights()])
-    
-initializer = keras.initializers.RandomNormal(mean=0.0, stddev=0.05, seed=42)
-reinitialize_layer(new_model, initializer, "dense_2") 
+# === MANUAL GRADIENT SCALING ===
+optimizer = tf.keras.optimizers.Adam()
 
-optimizers = [
-    tf.keras.optimizers.Adam(learning_rate=1e-3),
-    tf.keras.optimizers.Adam(learning_rate=1e-2)
-]
-optimizers_and_layers = [(optimizers[0], new_model.layers[0:-2]), (optimizers[1], new_model.layers[-1])]
-optimizer = tfa.optimizers.MultiOptimizer(optimizers_and_layers)
-new_model.compile(optimizer= optimizer, loss='categorical_crossentropy', metrics=['accuracy'])
-history = new_model.fit(X_train, y_train,validation_data=(X_train, y_train), epochs=16, batch_size=3)
+# Split trainable variables
+backbone_vars = []
+head_vars = []
+for layer in model.layers[:-5]:  
+    backbone_vars.extend(layer.trainable_variables)
+for layer in model.layers[-5:]: 
+    head_vars.extend(layer.trainable_variables)
 
-predictions2 = new_model.predict(X_test)
-predict_class2 = np.argmax(predictions2, axis=1)
-ground_truth = np.argmax(y_test, axis=1)
+# Convert to dataset
+dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train))
+dataset = dataset.shuffle(buffer_size=len(X_train)).batch(BATCH_SIZE)
 
-sns.set()
-f,ax=plt.subplots()
-y_true2 = ground_truth
-y_pred2 = predict_class2
-C22= confusion_matrix(y_true2, y_pred2)
-sns.heatmap(C22,annot=True,ax=ax) 
+loss_fn = tf.keras.losses.CategoricalCrossentropy()
 
-ax.set_title('confusion matrix') 
-ax.set_xlabel('predict')
-ax.set_ylabel('true') 
+for epoch in range(EPOCHS):
+    print(f"\nEpoch {epoch + 1}/{EPOCHS}")
+    epoch_loss = []
+    for x_batch, y_batch in dataset:
+        with tf.GradientTape() as tape:
+            logits = model(x_batch, training=True)
+            loss = loss_fn(y_batch, logits)
 
-plt.savefig('test2.png', dpi = 300)
+        grads = tape.gradient(loss, backbone_vars + head_vars)
+        grads_backbone = grads[:len(backbone_vars)]
+        grads_head = grads[len(backbone_vars):]
 
-scores = new_model.evaluate(X_test,y_test,verbose = 0)
-print(scores)
+        scaled_grads = []
+        for g, v in zip(grads_backbone, backbone_vars):
+            if g is not None:
+                scaled_grads.append((g * LR_BACKBONE, v))
+        for g, v in zip(grads_head, head_vars):
+            if g is not None:
+                scaled_grads.append((g * LR_HEAD, v))
 
-plt.plot(history.history['accuracy'])
-plt.plot(history.history['val_accuracy'])
-plt.title('model accuracy')
-plt.ylabel('accuracy')
-plt.xlabel('epoch')
-plt.legend(['train', 'test'], loc='upper left')
-plt.show()
-# summarize history for loss
-plt.plot(history.history['loss'])
-plt.plot(history.history['val_loss'])
-plt.title('model loss')
-plt.ylabel('loss')
-plt.xlabel('epoch')
-plt.legend(['train', 'test'], loc='upper left')
-plt.show()
+        optimizer.apply_gradients(scaled_grads)
+        epoch_loss.append(loss.numpy())
+
+    print(f"Loss: {np.mean(epoch_loss):.4f}")
+
+# === SAVE MODEL ===
+model.save(output_path)
+print(f"\n Adapted model saved to: {output_path}")

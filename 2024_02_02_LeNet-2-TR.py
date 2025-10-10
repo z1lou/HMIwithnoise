@@ -71,7 +71,7 @@ def reinitialize_layer(model, layer_name):
 reinitialize_layer(model, "dense_17")  # Replace name if needed
 
 # === MANUAL GRADIENT SCALING ===
-optimizer = tf.keras.optimizers.Adam()
+optimizer = tf.keras.optimizers.Adam(learning_rate=1.0)
 
 # Split trainable variables
 backbone_vars = []
